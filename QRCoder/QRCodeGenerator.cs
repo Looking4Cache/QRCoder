@@ -51,6 +51,11 @@ namespace QRCoder
 
         public QRCodeData CreateQrCode(string plainText, ECCLevel eccLevel, bool forceUtf8 = false, bool utf8BOM = false, EciMode eciMode = EciMode.Default, int requestedVersion = -1)
         {
+            return CreateQrCode(plainText, eccLevel, forceUtf8, utf8BOM, eciMode, requestedVersion, -1);
+        }
+
+        public QRCodeData CreateQrCode(string plainText, ECCLevel eccLevel, bool forceUtf8 = false, bool utf8BOM = false, EciMode eciMode = EciMode.Default, int requestedVersion = -1, int forceMaskVersion = -1)
+        {
             EncodingMode encoding = GetEncodingFromPlaintext(plainText, forceUtf8);
             var codedText = this.PlainTextToBinary(plainText, encoding, eciMode, utf8BOM, forceUtf8);
             var dataInputLength = this.GetDataLength(encoding, plainText, codedText, forceUtf8);
@@ -153,7 +158,7 @@ namespace QRCoder
             ModulePlacer.PlaceDarkModule(ref qr, version, ref blockedModules);
             ModulePlacer.ReserveVersionAreas(qr.ModuleMatrix.Count, version, ref blockedModules);
             ModulePlacer.PlaceDataWords(ref qr, interleavedData, ref blockedModules);
-            var maskVersion = ModulePlacer.MaskCode(ref qr, version, ref blockedModules, eccLevel);
+            var maskVersion = ModulePlacer.MaskCode(ref qr, version, ref blockedModules, eccLevel, forceMaskVersion);
             var formatStr = GetFormatString(eccLevel, maskVersion);
 
             ModulePlacer.PlaceFormat(ref qr, formatStr);
@@ -291,64 +296,70 @@ namespace QRCoder
             }
 
 
-            public static int MaskCode(ref QRCodeData qrCode, int version, ref List<Rectangle> blockedModules, ECCLevel eccLevel)
+            public static int MaskCode(ref QRCodeData qrCode, int version, ref List<Rectangle> blockedModules, ECCLevel eccLevel, int forceMaskVersion)
             {
                 var patternName = string.Empty;
                 var patternScore = 0;
 
                 var size = qrCode.ModuleMatrix.Count;
 
-
-                #if NET40
-                    var methods = typeof (MaskPattern).GetMethods();
-                #else
+                if (forceMaskVersion == -1) {
+#if NET40
+                    var methods = typeof(MaskPattern).GetMethods();
+#else
                     var methods = typeof (MaskPattern).GetTypeInfo().DeclaredMethods;
-                #endif
+#endif
 
-                foreach (var pattern in methods)
-                {
-                    if (pattern.Name.Length == 8 && pattern.Name.StartsWith("Pattern"))
+                    foreach (var pattern in methods)
                     {
-                        var qrTemp = new QRCodeData(version);
-                        for (var y = 0; y < size; y++)
+                        if (pattern.Name.Length == 8 && pattern.Name.StartsWith("Pattern"))
                         {
-                            for (var x = 0; x < size; x++)
-                            {
-                                qrTemp.ModuleMatrix[y][x] = qrCode.ModuleMatrix[y][x];
-                            }
-
-                        }
-
-                        var formatStr = GetFormatString(eccLevel, Convert.ToInt32((pattern.Name.Substring(7, 1)))-1);
-                        ModulePlacer.PlaceFormat(ref qrTemp, formatStr);
-                        if (version >= 7)
-                        {
-                            var versionString = GetVersionString(version);
-                            ModulePlacer.PlaceVersion(ref qrTemp, versionString);
-                        }
-
-                        for (var x = 0; x < size; x++)
-                        {
+                            var qrTemp = new QRCodeData(version);
                             for (var y = 0; y < size; y++)
                             {
-                                if (!IsBlocked(new Rectangle(x, y, 1, 1), blockedModules))
+                                for (var x = 0; x < size; x++)
                                 {
-                                    qrTemp.ModuleMatrix[y][x] ^= (bool)pattern.Invoke(null, new object[] { x, y });
+                                    qrTemp.ModuleMatrix[y][x] = qrCode.ModuleMatrix[y][x];
+                                }
+
+                            }
+
+                            var formatStr = GetFormatString(eccLevel, Convert.ToInt32((pattern.Name.Substring(7, 1))) - 1);
+                            ModulePlacer.PlaceFormat(ref qrTemp, formatStr);
+                            if (version >= 7)
+                            {
+                                var versionString = GetVersionString(version);
+                                ModulePlacer.PlaceVersion(ref qrTemp, versionString);
+                            }
+
+                            for (var x = 0; x < size; x++)
+                            {
+                                for (var y = 0; y < size; y++)
+                                {
+                                    if (!IsBlocked(new Rectangle(x, y, 1, 1), blockedModules))
+                                    {
+                                        qrTemp.ModuleMatrix[y][x] ^= (bool)pattern.Invoke(null, new object[] { x, y });
+                                    }
                                 }
                             }
-                        }
 
-                        var score = MaskPattern.Score(ref qrTemp);
-                        if (string.IsNullOrEmpty(patternName) || patternScore > score)
-                        {
-                            patternName = pattern.Name;
-                            patternScore = score;
-                        }
+                            var score = MaskPattern.Score(ref qrTemp);
+                            Console.WriteLine(pattern.Name);
+                            Console.WriteLine(score);
+                            if (string.IsNullOrEmpty(patternName) || patternScore > score)
+                            {
+                                patternName = pattern.Name;
+                                patternScore = score;
+                            }
 
+                        }
                     }
                 }
-
-
+                else
+                {
+                    patternName = String.Concat("Pattern", forceMaskVersion);
+                }
+                Console.WriteLine(patternName);
 
                 #if NET40
                     var patterMethod = typeof(MaskPattern).GetMethods().First(x => x.Name == patternName);
